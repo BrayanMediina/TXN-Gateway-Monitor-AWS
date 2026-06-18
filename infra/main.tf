@@ -203,6 +203,11 @@ resource "aws_iam_role_policy" "github_actions_deploy" {
       },
       {
         Effect   = "Allow"
+        Action   = ["apigateway:GET"]
+        Resource = "arn:aws:apigateway:${var.aws_region}::/apis/*"
+      },
+      {
+        Effect   = "Allow"
         Action   = ["apigateway:PATCH"]
         Resource = "arn:aws:apigateway:${var.aws_region}::/apis/${module.apigw.api_id}/integrations/*"
       }

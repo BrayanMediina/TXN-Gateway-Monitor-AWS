@@ -145,11 +145,24 @@ jobs:
             --query "NetworkInterfaces[0].Association.PublicIp" \
             --output text)
 
-          echo "Apuntando API Gateway a ECS IP: ${PUBLIC_IP}"
+          echo "ECS IP: ${PUBLIC_IP}"
+
+          API_GW_ID=$(aws apigatewayv2 get-apis \
+            --region ${{ env.AWS_REGION }} \
+            --query "Items[?Name=='txn-gateway-http-api'].ApiId" \
+            --output text)
+
+          INTEGRATION_ID=$(aws apigatewayv2 get-integrations \
+            --api-id "$API_GW_ID" \
+            --region ${{ env.AWS_REGION }} \
+            --query "Items[0].IntegrationId" \
+            --output text)
+
+          echo "Apuntando API GW ${API_GW_ID} (integration ${INTEGRATION_ID}) → ${PUBLIC_IP}"
 
           aws apigatewayv2 update-integration \
-            --api-id ${{ secrets.API_GW_ID }} \
-            --integration-id ${{ secrets.API_GW_INTEGRATION_ID }} \
+            --api-id "$API_GW_ID" \
+            --integration-id "$INTEGRATION_ID" \
             --integration-uri "http://${PUBLIC_IP}:8000/{proxy}" \
             --region ${{ env.AWS_REGION }}
 
