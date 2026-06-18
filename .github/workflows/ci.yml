@@ -23,10 +23,8 @@ jobs:
       - name: Install dependencies
         working-directory: services/gateway-service
         run: |
-          pip install --upgrade pip
+          pip install --upgrade pip setuptools
           pip install -r requirements-dev.txt
-          # BUG FIX: instalar el paquete en modo editable para que
-          # "from gateway.xxx import xxx" funcione en pytest
           pip install -e .
 
       - name: Lint with ruff
