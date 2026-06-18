@@ -33,6 +33,7 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             body = json.loads(record["body"])
             detail = body.get("detail", {})
             txn_id = detail.get("txn_id")
+            timestamp = detail.get("timestamp", "")
 
             logger.warning(
                 "DLQ message received",
@@ -49,14 +50,14 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                     MessageBody=record["body"],
                     DelaySeconds=min(backoff, 900),  # SQS max delay: 900s
                 )
-                _update_txn_status(txn_id, "RETRYING", receive_count)
+                _update_txn_status(txn_id, timestamp, "RETRYING", receive_count)
             else:
                 # Supera máximos reintentos: marcar como FAILED permanente
                 logger.error(
                     "Max retries exceeded, marking as FAILED",
                     extra={"txn_id": txn_id},
                 )
-                _update_txn_status(txn_id, "FAILED", receive_count)
+                _update_txn_status(txn_id, timestamp, "FAILED", receive_count)
 
         except Exception as exc:
             logger.error("DLQ handler error", extra={"message_id": message_id, "error": str(exc)})
@@ -65,12 +66,12 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     return {"batchItemFailures": failed_items}
 
 
-def _update_txn_status(txn_id: str | None, status: str, retry_count: int) -> None:
-    if not txn_id:
+def _update_txn_status(txn_id: str | None, timestamp: str, status: str, retry_count: int) -> None:
+    if not txn_id or not timestamp:
         return
     try:
         table.update_item(
-            Key={"txnId": txn_id},
+            Key={"txnId": txn_id, "timestamp": timestamp},
             UpdateExpression="SET #s = :status, retry_count = :rc, updated_at = :ua",
             ExpressionAttributeNames={"#s": "status"},
             ExpressionAttributeValues={

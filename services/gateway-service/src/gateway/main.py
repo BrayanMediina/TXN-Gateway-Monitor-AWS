@@ -34,9 +34,12 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # En producción: lista explícita de orígenes
+    allow_origins=[
+        "https://d3q5sjqh5x3d32.cloudfront.net",
+        "http://localhost:3000",
+    ],
     allow_methods=["GET", "POST"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 app.include_router(events.router)

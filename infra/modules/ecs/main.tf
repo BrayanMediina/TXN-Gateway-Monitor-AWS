@@ -163,11 +163,15 @@ resource "aws_security_group" "gateway" {
   description = "Gateway service: permite trafico HTTP en 8000"
   vpc_id      = data.aws_vpc.default.id
 
+  # SECURITY NOTE: Puerto 8000 expuesto a internet para que API Gateway pueda
+  # llegar al task. Mejora de producción: usar API Gateway VPC Link + ECS en
+  # subnet privada para eliminar la IP pública y este ingress abierto.
   ingress {
     from_port   = 8000
     to_port     = 8000
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTP desde API Gateway (prod: reemplazar por VPC Link)"
   }
 
   egress {
