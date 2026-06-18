@@ -31,3 +31,9 @@ variable "github_repo" {
   default     = "BrayanMediina/TXN-Gateway-Monitor-AWS"
 }
 
+variable "ecs_initial_ip" {
+  description = "IP inicial del task ECS (el deploy workflow la actualiza en cada push)"
+  type        = string
+  default     = "0.0.0.0"
+}
+

@@ -123,9 +123,8 @@ jobs:
             --region ${{ env.AWS_REGION }}
           echo "ECS deployment estable"
 
-      # ── ECS: obtener IP pública del task ──────────────────────────────────
-      - name: Get ECS task public IP
-        id: ecs-ip
+      # ── API Gateway: apuntar al nuevo task ECS ───────────────────────────
+      - name: Update API Gateway integration with new ECS IP
         run: |
           TASK_ARN=$(aws ecs list-tasks \
             --cluster txn-gateway-cluster \
@@ -146,16 +145,22 @@ jobs:
             --query "NetworkInterfaces[0].Association.PublicIp" \
             --output text)
 
-          echo "api_url=http://${PUBLIC_IP}:8000" >> $GITHUB_OUTPUT
-          echo "ECS API disponible en: http://${PUBLIC_IP}:8000"
+          echo "Apuntando API Gateway a ECS IP: ${PUBLIC_IP}"
+
+          aws apigatewayv2 update-integration \
+            --api-id ${{ secrets.API_GW_ID }} \
+            --integration-id ${{ secrets.API_GW_INTEGRATION_ID }} \
+            --integration-uri "http://${PUBLIC_IP}:8000/{proxy}" \
+            --region ${{ env.AWS_REGION }}
 
       # ── Frontend: build y deploy a S3 + CloudFront ───────────────────────
+      # VITE_API_URL viene de frontend/.env.production (URL estable de API GW)
+      # No se pasa como variable aquí — Vite la lee automáticamente del archivo.
       - name: Deploy frontend to S3
         if: env.S3_BUCKET != ''
         env:
           S3_BUCKET: ${{ secrets.FRONTEND_S3_BUCKET }}
           CF_DIST_ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}
-          VITE_API_URL: ${{ steps.ecs-ip.outputs.api_url }}
         working-directory: frontend
         run: |
           npm ci

@@ -77,6 +77,28 @@ module "frontend" {
   source = "./modules/frontend"
 }
 
+# ── API Gateway: HTTPS proxy → ECS ───────────────────────────────────────────
+module "apigw" {
+  source    = "./modules/apigw"
+  cf_domain = module.frontend.domain_name
+  ecs_ip    = var.ecs_initial_ip
+}
+
+output "api_gateway_url" {
+  value       = module.apigw.api_endpoint
+  description = "URL HTTPS del API Gateway — configura como VITE_API_URL en .env.production"
+}
+
+output "api_gateway_id" {
+  value       = module.apigw.api_id
+  description = "ID del API Gateway — configura como secret API_GW_ID"
+}
+
+output "api_gateway_integration_id" {
+  value       = module.apigw.integration_id
+  description = "ID de la integración ECS — configura como secret API_GW_INTEGRATION_ID"
+}
+
 output "frontend_url" {
   value       = "https://${module.frontend.domain_name}"
   description = "URL pública del dashboard React vía CloudFront"
@@ -178,6 +200,11 @@ resource "aws_iam_role_policy" "github_actions_deploy" {
         Effect   = "Allow"
         Action   = ["cloudfront:CreateInvalidation"]
         Resource = "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:distribution/${module.frontend.distribution_id}"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["apigateway:PATCH"]
+        Resource = "arn:aws:apigateway:${var.aws_region}::/apis/${module.apigw.api_id}/integrations/*"
       }
     ]
   })
