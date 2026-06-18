@@ -204,7 +204,7 @@ resource "aws_iam_role_policy" "github_actions_deploy" {
       {
         Effect   = "Allow"
         Action   = ["apigateway:GET"]
-        Resource = "arn:aws:apigateway:${var.aws_region}::/apis/*"
+        Resource = "*"
       },
       {
         Effect   = "Allow"
