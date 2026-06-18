@@ -31,8 +31,3 @@ variable "github_repo" {
   default     = "BrayanMediina/TXN-Gateway-Monitor-AWS"
 }
 
-variable "frontend_s3_bucket" {
-  description = "Nombre del bucket S3 para el frontend (opcional)"
-  type        = string
-  default     = ""
-}

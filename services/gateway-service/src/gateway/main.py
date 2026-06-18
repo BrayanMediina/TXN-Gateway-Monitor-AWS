@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 
 from gateway.config import get_settings
 from gateway.middleware.logging import setup_logging
-from gateway.routers import events, health
+from gateway.routers import events, health, metrics
 
 logger = structlog.get_logger(__name__)
 settings = get_settings()
@@ -41,6 +41,7 @@ app.add_middleware(
 
 app.include_router(events.router)
 app.include_router(health.router)
+app.include_router(metrics.router)
 
 
 @app.exception_handler(Exception)

@@ -63,8 +63,13 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
     Statement = [
       {
         Effect   = "Allow"
-        Action   = ["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:UpdateItem", "dynamodb:Query"]
+        Action   = ["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:UpdateItem", "dynamodb:Query", "dynamodb:Scan"]
         Resource = [var.dynamodb_table_arn, "${var.dynamodb_table_arn}/index/*"]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["sqs:GetQueueUrl", "sqs:GetQueueAttributes"]
+        Resource = "*"
       },
       {
         Effect   = "Allow"

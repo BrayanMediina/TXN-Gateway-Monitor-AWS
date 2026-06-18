@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
+from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from gateway.models.transaction import TransactionEvent, TransactionResponse
 from gateway.services.dynamodb_service import DynamoDBService
@@ -47,13 +48,26 @@ async def publish_event(
 
 
 @router.get(
+    "",
+    summary="Listar transacciones recientes",
+    description="Retorna las últimas N transacciones ordenadas por timestamp descendente.",
+)
+async def list_events(
+    limit: int = Query(default=50, ge=1, le=200),
+    db: DynamoDBService = Depends(get_db_service),
+) -> list[dict[str, Any]]:
+    logger.info("list_events_requested", limit=limit)
+    return await db.list_transactions(limit=limit)
+
+
+@router.get(
     "/{txn_id}",
     summary="Consultar estado de transacción",
 )
 async def get_transaction(
     txn_id: str,
     db: DynamoDBService = Depends(get_db_service),
-) -> dict:
+) -> dict[str, Any]:
     txn = await db.get_transaction(txn_id)
     if not txn:
         raise HTTPException(

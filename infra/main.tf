@@ -72,6 +72,26 @@ module "ecs" {
   aws_region         = var.aws_region
 }
 
+# ── Frontend: S3 + CloudFront ─────────────────────────────────────────────────
+module "frontend" {
+  source = "./modules/frontend"
+}
+
+output "frontend_url" {
+  value       = "https://${module.frontend.domain_name}"
+  description = "URL pública del dashboard React vía CloudFront"
+}
+
+output "frontend_s3_bucket" {
+  value       = module.frontend.bucket_name
+  description = "Bucket S3 del frontend — configura como secret FRONTEND_S3_BUCKET"
+}
+
+output "cloudfront_distribution_id" {
+  value       = module.frontend.distribution_id
+  description = "ID de la distribución CloudFront — configura como secret CLOUDFRONT_DISTRIBUTION_ID"
+}
+
 # ── Phase 5: GitHub Actions OIDC ─────────────────────────────────────────────
 data "aws_caller_identity" "current" {}
 
@@ -124,24 +144,40 @@ resource "aws_iam_role_policy" "github_actions_deploy" {
         Resource = "*"
       },
       {
-        Effect   = "Allow"
-        Action   = ["ecs:UpdateService", "ecs:DescribeServices"]
-        Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/txn-gateway-cluster/gateway-service"
+        Effect = "Allow"
+        Action = [
+          "ecs:UpdateService",
+          "ecs:DescribeServices",
+          "ecs:ListTasks",
+          "ecs:DescribeTasks"
+        ]
+        Resource = "*"
       },
       {
         Effect   = "Allow"
-        Action   = ["lambda:UpdateFunctionCode"]
-        Resource = "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:txn-*"
+        Action   = ["ec2:DescribeNetworkInterfaces"]
+        Resource = "*"
       },
       {
-        Effect   = "Allow"
-        Action   = ["s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
-        Resource = ["arn:aws:s3:::${var.frontend_s3_bucket}", "arn:aws:s3:::${var.frontend_s3_bucket}/*"]
+        Effect = "Allow"
+        Action = ["lambda:UpdateFunctionCode"]
+        Resource = [
+          "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:txn-*",
+          "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:dlq-*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = ["s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
+        Resource = [
+          module.frontend.bucket_arn,
+          "${module.frontend.bucket_arn}/*"
+        ]
       },
       {
         Effect   = "Allow"
         Action   = ["cloudfront:CreateInvalidation"]
-        Resource = "*"
+        Resource = "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:distribution/${module.frontend.distribution_id}"
       }
     ]
   })

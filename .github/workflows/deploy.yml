@@ -9,10 +9,43 @@ env:
   ECR_REPOSITORY: txn-gateway-service
 
 jobs:
-  deploy:
+  # ── Gate: tests deben pasar antes del deploy ──────────────────────────────
+  # BUG FIX: el deploy corría sin verificar que los tests pasen.
+  # Este job replica el test de gateway como gate mínimo antes de hacer push.
+  test:
+    name: Test Gate — gateway-service
     runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/gateway-service/requirements-dev.txt
+
+      - name: Install dependencies
+        working-directory: services/gateway-service
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install -e .
+
+      - name: Run tests
+        working-directory: services/gateway-service
+        env:
+          PYTHONPATH: src
+        run: pytest tests/ -v --tb=short
+
+  # ── Deploy ────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to AWS
+    runs-on: ubuntu-latest
+    needs: test  # BUG FIX: espera que los tests pasen
     permissions:
-      id-token: write   # OIDC para AWS sin secrets de larga duración
+      id-token: write   # OIDC — obligatorio para assume role
       contents: read
 
     steps:
@@ -28,6 +61,7 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      # ── Docker: build y push ──────────────────────────────────────────────
       - name: Build, tag and push image to ECR
         id: build-image
         env:
@@ -35,45 +69,103 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG services/gateway-service/
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker tag  $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+                      $ECR_REGISTRY/$ECR_REPOSITORY:latest
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      - name: Deploy to ECS (rolling update)
+      # ── ECS: rolling update ───────────────────────────────────────────────
+      - name: Deploy to ECS
         run: |
+          # BUG FIX: --desired-count 1 garantiza que el servicio arranca aunque
+          # esté en 0 (escalado a mano). Sin esto, force-new-deployment es un noop.
           aws ecs update-service \
             --cluster txn-gateway-cluster \
             --service gateway-service \
-            --force-new-deployment
+            --desired-count 1 \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
 
+      # ── Lambda: actualizar código ─────────────────────────────────────────
       - name: Deploy Lambda functions
         run: |
-          for fn in txn_processor dlq_handler reconcile; do
-            zip -j /tmp/${fn}.zip lambdas/${fn}/handler.py
+          # BUG FIX: el loop original usaba "txn-${fn//_/-}" que producía:
+          #   txn_processor → txn-txn-processor  (WRONG)
+          #   dlq_handler   → txn-dlq-handler    (WRONG, nombre real: dlq-reprocessor)
+          #   reconcile     → txn-reconcile       (correcto por casualidad)
+          # Se reemplaza por una tabla explícita de nombre de directorio → nombre AWS.
+          declare -A FN_NAMES=(
+            [txn_processor]="txn-processor"
+            [dlq_handler]="dlq-reprocessor"
+            [reconcile]="txn-reconcile"
+          )
+
+          for dir in txn_processor dlq_handler reconcile; do
+            fn_name="${FN_NAMES[$dir]}"
+            zip -j /tmp/${dir}.zip lambdas/${dir}/handler.py
+
             aws lambda update-function-code \
-              --function-name txn-${fn//_/-} \
-              --zip-file fileb:///tmp/${fn}.zip \
+              --function-name "$fn_name" \
+              --zip-file "fileb:///tmp/${dir}.zip" \
+              --region ${{ env.AWS_REGION }} \
               --no-cli-pager
-            echo "Lambda ${fn} desplegada"
+
+            echo "Lambda $fn_name desplegada (desde lambdas/$dir/)"
           done
 
-      - name: Wait for ECS deployment
+      # ── ECS: esperar estabilización ───────────────────────────────────────
+      - name: Wait for ECS to stabilize
         run: |
           aws ecs wait services-stable \
             --cluster txn-gateway-cluster \
-            --services gateway-service
+            --services gateway-service \
+            --region ${{ env.AWS_REGION }}
           echo "ECS deployment estable"
 
+      # ── ECS: obtener IP pública del task ──────────────────────────────────
+      - name: Get ECS task public IP
+        id: ecs-ip
+        run: |
+          TASK_ARN=$(aws ecs list-tasks \
+            --cluster txn-gateway-cluster \
+            --service-name gateway-service \
+            --region ${{ env.AWS_REGION }} \
+            --query "taskArns[0]" --output text)
+
+          ENI=$(aws ecs describe-tasks \
+            --cluster txn-gateway-cluster \
+            --tasks "$TASK_ARN" \
+            --region ${{ env.AWS_REGION }} \
+            --query "tasks[0].attachments[0].details[?name=='networkInterfaceId'].value" \
+            --output text)
+
+          PUBLIC_IP=$(aws ec2 describe-network-interfaces \
+            --network-interface-ids "$ENI" \
+            --region ${{ env.AWS_REGION }} \
+            --query "NetworkInterfaces[0].Association.PublicIp" \
+            --output text)
+
+          echo "api_url=http://${PUBLIC_IP}:8000" >> $GITHUB_OUTPUT
+          echo "ECS API disponible en: http://${PUBLIC_IP}:8000"
+
+      # ── Frontend: build y deploy a S3 + CloudFront ───────────────────────
       - name: Deploy frontend to S3
+        if: env.S3_BUCKET != ''
         env:
           S3_BUCKET: ${{ secrets.FRONTEND_S3_BUCKET }}
-        if: env.S3_BUCKET != ''
+          CF_DIST_ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}
+          VITE_API_URL: ${{ steps.ecs-ip.outputs.api_url }}
+        working-directory: frontend
         run: |
-          cd frontend
-          npm install
+          npm ci
           npm run build
-          aws s3 sync dist/ s3://$S3_BUCKET --delete
-          aws cloudfront create-invalidation \
-            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
-            --paths "/*" || true
+          aws s3 sync dist/ s3://$S3_BUCKET --delete \
+            --region ${{ env.AWS_REGION }}
+
+          if [ -n "$CF_DIST_ID" ]; then
+            aws cloudfront create-invalidation \
+              --distribution-id "$CF_DIST_ID" \
+              --paths "/*"
+            echo "CloudFront invalidation creada"
+          fi
