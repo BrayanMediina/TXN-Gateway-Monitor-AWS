@@ -1,0 +1,79 @@
+name: Deploy — ECS + Lambda
+
+on:
+  push:
+    branches: [main]
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: txn-gateway-service
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # OIDC para AWS sin secrets de larga duración
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag and push image to ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG services/gateway-service/
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Deploy to ECS (rolling update)
+        run: |
+          aws ecs update-service \
+            --cluster txn-gateway-cluster \
+            --service gateway-service \
+            --force-new-deployment
+
+      - name: Deploy Lambda functions
+        run: |
+          for fn in txn_processor dlq_handler reconcile; do
+            zip -j /tmp/${fn}.zip lambdas/${fn}/handler.py
+            aws lambda update-function-code \
+              --function-name txn-${fn//_/-} \
+              --zip-file fileb:///tmp/${fn}.zip \
+              --no-cli-pager
+            echo "Lambda ${fn} desplegada"
+          done
+
+      - name: Wait for ECS deployment
+        run: |
+          aws ecs wait services-stable \
+            --cluster txn-gateway-cluster \
+            --services gateway-service
+          echo "ECS deployment estable"
+
+      - name: Deploy frontend to S3
+        env:
+          S3_BUCKET: ${{ secrets.FRONTEND_S3_BUCKET }}
+        if: env.S3_BUCKET != ''
+        run: |
+          cd frontend
+          npm install
+          npm run build
+          aws s3 sync dist/ s3://$S3_BUCKET --delete
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/*" || true

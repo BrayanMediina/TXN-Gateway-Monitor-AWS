@@ -1,0 +1,4 @@
+aws_region    = "us-east-1"
+environment   = "dev"
+alert_email   = "julian.mediina@gmail.com"
+ecr_image_uri = "123456789012.dkr.ecr.us-east-1.amazonaws.com/txn-gateway-service:latest"
