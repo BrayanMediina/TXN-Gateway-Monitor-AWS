@@ -28,7 +28,7 @@ variable "ecr_image_uri" {
 variable "github_repo" {
   description = "Repo GitHub en formato owner/repo para el OIDC trust policy"
   type        = string
-  default     = "BrayanMediina/PortafolioAWS"
+  default     = "BrayanMediina/TXN-Gateway-Monitor-AWS"
 }
 
 variable "frontend_s3_bucket" {
